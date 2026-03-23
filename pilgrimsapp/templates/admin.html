@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+</head>
+<body class="bg-gray-100">
+    <div class="flex h-screen">
+        <div class="w-80 bg-gray-900 text-white p-4 overflow-y-auto">
+            <div class="text-center mb-6">
+                <div class="text-4xl mb-2">🕋</div>
+                <h2 class="text-xl font-bold">Admin Dashboard</h2>
+                <p class="text-sm text-gray-400">{{ user.user_name }}</p>
+            </div>
+
+            <div class="space-y-3 mb-6">
+                <div class="bg-gray-800 p-3 rounded">
+                    <div class="text-2xl font-bold" id="totalUsers">0</div>
+                    <div class="text-sm">Total Pilgrims</div>
+                </div>
+                <div class="bg-gray-800 p-3 rounded">
+                    <div class="text-2xl font-bold text-green-400" id="activeUsers">0</div>
+                    <div class="text-sm">Active Now</div>
+                </div>
+                <div class="bg-gray-800 p-3 rounded">
+                    <div class="text-2xl font-bold text-red-400" id="outsideUsers">0</div>
+                    <div class="text-sm">Outside Zones</div>
+                </div>
+                <div class="bg-gray-800 p-3 rounded">
+                    <div class="text-2xl font-bold text-yellow-400" id="alertsCount">0</div>
+                    <div class="text-sm">Active Alerts</div>
+                </div>
+            </div>
+
+            <button onclick="showAddZone()" class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded mb-4">
+                + Add Safe Zone
+            </button>
+
+            <div>
+                <h3 class="text-sm font-semibold text-gray-400 mb-2">SAFE ZONES</h3>
+                <div id="zonesList" class="space-y-2"></div>
+            </div>
+
+            <a href="/logout" class="block text-center bg-red-600 hover:bg-red-700 py-2 rounded mt-4">Logout</a>
+        </div>
+
+        <div class="flex-1">
+            <div class="bg-white shadow p-4">
+                <h1 class="text-2xl font-bold">Live Tracking Map</h1>
+                <p class="text-sm text-gray-500">Click on map to get coordinates for zones</p>
+            </div>
+            <div id="map" style="height: calc(100vh - 80px);"></div>
+        </div>
+    </div>
+
+    <div id="zoneModal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+        <div class="bg-white rounded p-6 w-96">
+            <h3 class="text-xl font-bold mb-4">Add Safe Zone</h3>
+            <input type="text" id="zoneName" placeholder="Zone Name" class="w-full p-2 border rounded mb-2">
+            <input type="number" id="zoneLat" placeholder="Latitude" step="any" class="w-full p-2 border rounded mb-2">
+            <input type="number" id="zoneLng" placeholder="Longitude" step="any" class="w-full p-2 border rounded mb-2">
+            <input type="number" id="zoneRadius" placeholder="Radius (km)" step="any" class="w-full p-2 border rounded mb-2">
+            <textarea id="zoneDesc" placeholder="Description" class="w-full p-2 border rounded mb-4"></textarea>
+            <div class="flex gap-2">
+                <button onclick="addZone()" class="flex-1 bg-blue-600 text-white py-2 rounded">Add</button>
+                <button onclick="closeModal()" class="flex-1 bg-gray-300 py-2 rounded">Cancel</button>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">💡 Click on the map to auto-fill coordinates</p>
+        </div>
+    </div>
+
+    <div id="alertContainer" class="fixed top-4 right-4 z-50" style="width: 350px;"></div>
+
+    <script>
+        let map, markers = {}, socket = io();
+
+        function initMap() {
+            map = L.map('map').setView([21.4225, 39.8262], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+            map.on('click', function(e) {
+                document.getElementById('zoneLat').value = e.latlng.lat.toFixed(6);
+                document.getElementById('zoneLng').value = e.latlng.lng.toFixed(6);
+                showAddZone();
+            });
+        }
+
+        function showAlert(userName, message, lat, lng) {
+            const container = document.getElementById('alertContainer');
+            const div = document.createElement('div');
+            div.className = 'bg-red-500 text-white p-4 rounded-lg shadow-lg mb-2 animate-pulse';
+            div.innerHTML = `
+                <div class="font-bold text-lg">⚠️ ZONE VIOLATION</div>
+                <div class="mt-1"><strong>User:</strong> ${userName}</div>
+                <div class="text-sm">${message}</div>
+                <div class="text-xs mt-1">📍 ${lat.toFixed(4)}, ${lng.toFixed(4)}</div>
+                <div class="text-xs">🕐 ${new Date().toLocaleTimeString()}</div>
+                <button onclick="this.parentElement.remove()" class="mt-2 text-sm underline">Dismiss</button>
+            `;
+            container.appendChild(div);
+            setTimeout(() => div.remove(), 10000);
+
+            // Play sound
+            new Audio('https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3').play().catch(e=>console.log('no sound'));
+        }
+
+        async function loadData() {
+            try {
+                const locRes = await fetch('/api/locations');
+                const locations = await locRes.json();
+                updateMarkers(locations);
+
+                const zoneRes = await fetch('/api/zones');
+                const zones = await zoneRes.json();
+                updateZones(zones);
+
+                const statsRes = await fetch('/api/stats');
+                const stats = await statsRes.json();
+                document.getElementById('totalUsers').textContent = stats.total;
+                document.getElementById('activeUsers').textContent = stats.active;
+                document.getElementById('outsideUsers').textContent = stats.outside;
+                document.getElementById('alertsCount').textContent = stats.alerts;
+            } catch(e) { console.error('Load error:', e); }
+        }
+
+        function updateMarkers(locations) {
+            Object.values(markers).forEach(m => map.removeLayer(m));
+            markers = {};
+            locations.forEach(loc => {
+                if (loc.lat && loc.lng) {
+                    const color = loc.inside ? 'green' : 'red';
+                    const marker = L.marker([loc.lat, loc.lng], {
+                        icon: L.divIcon({html: `<div style="background:${color};width:12px;height:12px;border-radius:50%;border:2px solid white"></div>`, iconSize: [12,12]})
+                    }).bindPopup(`<b>${loc.name}</b><br>${loc.inside ? '✅ Safe' : '⚠️ OUTSIDE'}`);
+                    marker.addTo(map);
+                    markers[loc.id] = marker;
+                }
+            });
+        }
+
+        function updateZones(zones) {
+            zones.forEach(zone => {
+                L.circle([zone.lat, zone.lng], {
+                    radius: zone.radius * 1000,
+                    color: 'blue',
+                    fillColor: '#3b82f6',
+                    fillOpacity: 0.1
+                }).addTo(map).bindPopup(`<b>${zone.name}</b><br>Radius: ${zone.radius} km`);
+            });
+
+            const zonesList = document.getElementById('zonesList');
+            if (zones.length === 0) {
+                zonesList.innerHTML = '<div class="text-gray-400 text-center p-2">No zones configured. Click "Add Safe Zone" to create one.</div>';
+            } else {
+                zonesList.innerHTML = zones.map(zone => `
+                    <div class="bg-gray-800 p-2 rounded">
+                        <div class="flex justify-between">
+                            <div>
+                                <div class="font-semibold">${zone.name}</div>
+                                <div class="text-xs text-gray-400">${zone.radius} km</div>
+                            </div>
+                            <button onclick="deleteZone(${zone.id})" class="text-red-400 text-xs">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        async function deleteZone(zoneId) {
+            if (confirm('Delete this safe zone?')) {
+                await fetch('/api/zones', {method: 'DELETE', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: zoneId})});
+                loadData();
+            }
+        }
+
+        function showAddZone() { document.getElementById('zoneModal').classList.remove('hidden'); document.getElementById('zoneModal').classList.add('flex'); }
+        function closeModal() { document.getElementById('zoneModal').classList.add('hidden'); document.getElementById('zoneModal').classList.remove('flex'); }
+
+        async function addZone() {
+            const zone = {
+                name: document.getElementById('zoneName').value,
+                lat: parseFloat(document.getElementById('zoneLat').value),
+                lng: parseFloat(document.getElementById('zoneLng').value),
+                radius: parseFloat(document.getElementById('zoneRadius').value),
+                desc: document.getElementById('zoneDesc').value
+            };
+            if (!zone.name || !zone.lat || !zone.lng || !zone.radius) { alert('Please fill all fields'); return; }
+
+            const res = await fetch('/api/zones', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(zone)});
+            if (res.ok) {
+                closeModal();
+                document.getElementById('zoneName').value = '';
+                document.getElementById('zoneDesc').value = '';
+                loadData();
+                alert('Safe zone added!');
+            } else { alert('Failed to add zone'); }
+        }
+
+        socket.on('zone_alert', (data) => { showAlert(data.user_name, data.message, data.lat, data.lng); loadData(); });
+        socket.on('location_update', () => loadData());
+        socket.on('zone_update', () => loadData());
+
+        initMap();
+        loadData();
+        setInterval(loadData, 5000);
+    </script>
+</body>
+</html>

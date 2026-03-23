@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pilgrims Tracker - Register</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-r from-purple-600 to-blue-600 flex items-center justify-center min-h-screen p-4">
+    <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-2xl">
+        <div class="text-center mb-6">
+            <div class="text-5xl mb-2">🕋</div>
+            <h1 class="text-2xl font-bold">Register as Pilgrim</h1>
+        </div>
+
+        <form id="registerForm">
+            <div class="grid grid-cols-2 gap-4">
+                <input type="text" id="full_name" placeholder="Full Name" class="p-3 border rounded" required>
+                <input type="email" id="email" placeholder="Email" class="p-3 border rounded" required>
+                <input type="password" id="password" placeholder="Password (min 4 chars)" class="p-3 border rounded" required>
+                <input type="text" id="phone" placeholder="Phone" class="p-3 border rounded" required>
+                <input type="text" id="nationality" placeholder="Nationality" class="p-3 border rounded" required>
+                <input type="text" id="passport" placeholder="Passport Number" class="p-3 border rounded" required>
+            </div>
+            <button type="submit" class="w-full bg-purple-600 text-white p-3 rounded hover:bg-purple-700 mt-4">Register</button>
+        </form>
+
+        <p class="text-center mt-4">Already have an account? <a href="/login" class="text-purple-600">Login</a></p>
+    </div>
+
+    <script>
+        document.getElementById('registerForm').onsubmit = async (e) => {
+            e.preventDefault();
+
+            const data = {
+                full_name: document.getElementById('full_name').value,
+                email: document.getElementById('email').value,
+                password: document.getElementById('password').value,
+                phone: document.getElementById('phone').value,
+                nationality: document.getElementById('nationality').value,
+                passport_number: document.getElementById('passport').value
+            };
+
+            const response = await fetch('/register', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                alert('Registration successful! Please login.');
+                window.location.href = '/login';
+            } else {
+                alert(result.message);
+            }
+        };
+    </script>
+</body>
+</html>

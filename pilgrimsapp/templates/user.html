@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pilgrim Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto p-6">
+        <div class="bg-white rounded shadow p-6 mb-6">
+            <div class="flex justify-between items-center">
+                <div>
+                    <div class="text-4xl mb-2">🕋</div>
+                    <h1 class="text-2xl font-bold">Welcome, {{ user.user_name }}!</h1>
+                    <p class="text-gray-600">Real-time Pilgrim Tracker</p>
+                </div>
+                <div id="statusBadge" class="bg-green-500 text-white px-6 py-3 rounded-lg text-center">
+                    <div class="text-sm">Status</div>
+                    <div class="text-xl font-bold" id="statusText">Checking...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-2 bg-white rounded shadow p-4">
+                <div id="map" style="height: 500px;"></div>
+            </div>
+
+            <div class="space-y-6">
+                <div class="bg-white rounded shadow p-4">
+                    <h3 class="font-bold text-lg mb-3">📍 Location Control</h3>
+                    <button onclick="getLocation()" class="w-full bg-blue-600 text-white py-2 rounded mb-2">Update My Location</button>
+                    <button onclick="startTracking()" class="w-full bg-green-600 text-white py-2 rounded">Auto-Track (30s)</button>
+                    <div id="locationInfo" class="mt-4 text-sm"></div>
+                </div>
+
+                <div class="bg-white rounded shadow p-4">
+                    <h3 class="font-bold text-lg mb-3">🔔 Alerts</h3>
+                    <div id="alertsList" class="space-y-2 max-h-64 overflow-y-auto"></div>
+                </div>
+
+                <div class="bg-white rounded shadow p-4">
+                    <h3 class="font-bold text-lg mb-3">🛡️ Safe Zones</h3>
+                    <div id="zonesList" class="space-y-2"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-6 text-center">
+            <a href="/logout" class="text-red-600">Logout</a>
+        </div>
+    </div>
+
+    <script>
+        let map, marker, socket = io(), trackingInterval;
+
+        function initMap() {
+            map = L.map('map').setView([21.4225, 39.8262], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        }
+
+        function getLocation() {
+            if ("geolocation" in navigator) {
+                navigator.geolocation.getCurrentPosition(async (pos) => {
+                    await updateLocation(pos.coords.latitude, pos.coords.longitude);
+                    map.setView([pos.coords.latitude, pos.coords.longitude], 14);
+                }, () => alert('Please enable location'));
+            }
+        }
+
+        async function updateLocation(lat, lng) {
+            const res = await fetch('/api/update_location', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({lat, lng})
+            });
+            const data = await res.json();
+
+            if (marker) map.removeLayer(marker);
+            const color = data.inside ? 'green' : 'red';
+            marker = L.marker([lat, lng], {
+                icon: L.divIcon({html: `<div style="background:${color};width:14px;height:14px;border-radius:50%;border:2px solid white"></div>`, iconSize: [14,14]})
+            }).addTo(map);
+
+            const statusBadge = document.getElementById('statusBadge');
+            const statusText = document.getElementById('statusText');
+            if (data.inside) {
+                statusBadge.className = 'bg-green-500 text-white px-6 py-3 rounded-lg text-center';
+                statusText.textContent = '✅ SAFE';
+            } else {
+                statusBadge.className = 'bg-red-500 text-white px-6 py-3 rounded-lg text-center';
+                statusText.textContent = '⚠️ ALERT';
+            }
+
+            document.getElementById('locationInfo').innerHTML = `
+                <strong>Location:</strong> ${lat.toFixed(4)}, ${lng.toFixed(4)}<br>
+                <strong>Status:</strong> ${data.inside ? 'Inside Safe Zone ✅' : 'Outside Safe Zone ⚠️'}<br>
+                <strong>Time:</strong> ${new Date().toLocaleTimeString()}
+            `;
+        }
+
+        function startTracking() {
+            if (trackingInterval) {
+                clearInterval(trackingInterval);
+                trackingInterval = null;
+                document.querySelector('button[onclick="startTracking()"]').innerHTML = 'Start Auto-Track';
+            } else {
+                getLocation();
+                trackingInterval = setInterval(getLocation, 30000);
+                document.querySelector('button[onclick="startTracking()"]').innerHTML = 'Stop Auto-Track';
+            }
+        }
+
+        async function loadZones() {
+            const res = await fetch('/api/zones');
+            const zones = await res.json();
+            const zonesList = document.getElementById('zonesList');
+            if (zones.length === 0) {
+                zonesList.innerHTML = '<div class="text-gray-500 text-center">No safe zones configured yet</div>';
+            } else {
+                zonesList.innerHTML = zones.map(z => `
+                    <div class="p-2 bg-gray-50 rounded">
+                        <div class="font-semibold">${z.name}</div>
+                        <div class="text-xs text-gray-600">${z.radius} km radius</div>
+                    </div>
+                `).join('');
+            }
+            zones.forEach(z => {
+                L.circle([z.lat, z.lng], {radius: z.radius * 1000, color: 'blue', fillColor: '#3b82f6', fillOpacity: 0.1}).addTo(map);
+            });
+        }
+
+        async function loadAlerts() {
+            const res = await fetch('/api/alerts');
+            const alerts = await res.json();
+            const alertsList = document.getElementById('alertsList');
+            if (alerts.length === 0) {
+                alertsList.innerHTML = '<div class="text-gray-500 text-center">No alerts</div>';
+            } else {
+                alertsList.innerHTML = alerts.map(a => `
+                    <div class="p-2 bg-red-50 border-l-4 border-red-500 rounded">
+                        <div class="text-sm">${a.message}</div>
+                        <div class="text-xs text-gray-500">${new Date(a.time).toLocaleString()}</div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        socket.on('personal_alert', (data) => {
+            loadAlerts();
+            alert(data.message);
+        });
+        socket.on('zone_update', () => loadZones());
+
+        initMap();
+        loadZones();
+        loadAlerts();
+        getLocation();
+        setInterval(loadAlerts, 10000);
+    </script>
+</body>
+</html>
